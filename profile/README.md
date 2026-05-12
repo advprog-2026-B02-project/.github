@@ -144,11 +144,129 @@ Arsitektur G.2 memperbaiki beberapa risiko dari arsitektur awal:
 
 ## Risk Mitigation
 
-### Hasil Risk Storming (Contoh)
-
-
-### Tindakan Prioritas
-
+### Mengapa Risk Storming Diterapkan
+ 
+BidMart adalah platform lelang real-time berbasis microservices. Ketika platform ini sukses dan digunakan oleh ribuan pengguna secara bersamaan, arsitektur awal yang cukup untuk tahap pengembangan akan menghadapi tekanan yang serius. Risk storming diterapkan karena tidak ada satu pun anggota tim yang dapat menilai risiko seluruh sistem sendirian setiap service memiliki karakteristik risiko yang berbeda, dan tanpa evaluasi kolaboratif, risiko tersembunyi baru teridentifikasi ketika sudah berada di lingkungan produksi.
+ 
+---
+ 
+### Risk Assessment: Identifikasi Risiko Utama
+ 
+Risk matrix yang digunakan mengalikan dua dimensi: **dampak** (1=rendah, 2=sedang, 3=tinggi) dan **kemungkinan terjadi** (1=rendah, 2=sedang, 3=tinggi). Skor 1-2 = risiko rendah, 3-4 = sedang, 6-9 = tinggi.
+ 
+#### Tabel Risk Assessment
+ 
+| Kriteria Risiko  | Auth Service | Bidding Service | Wallet Service | Catalog Service | Order Service | Total Risiko |
+|------------------|:------------:|:---------------:|:--------------:|:---------------:|:-------------:|:------------:|
+| Skalabilitas     | 2            | **6**           | 3              | 4               | 2             | 17           |
+| Ketersediaan     | 3            | **9**           | **9**          | 3               | 3             | 27           |
+| Performa         | 2            | **9**           | **6**          | 4               | 2             | 23           |
+| Keamanan         | **6**        | **6**           | **9**          | 3               | 4             | 28           |
+| Integritas Data  | 3            | **6**           | **9**          | 2               | **6**         | 26           |
+| **Total Risiko** | **16**       | **36**          | **36**         | **16**          | **17**        |              |
+ 
+---
+ 
+#### Bidding Service
+ 
+| Kriteria        | Skor    | Alasan |
+|-----------------|---------|--------|
+| Ketersediaan    | 9 (3x3) | Bidding adalah inti dari platform; jika service ini down saat lelang sedang berlangsung, semua transaksi gagal. Lelang real-time tidak toleran terhadap downtime. |
+| Performa        | 9 (3x3) | WebSocket harus mengirimkan pembaruan harga secara real-time ke semua peserta lelang. Di bawah beban tinggi, latensi yang meningkat menyebabkan bid dianggap tidak sah karena melewati anti-sniping window. |
+| Integritas Data | 6 (3x2) | Bid yang diterima harus direkam secara atomik dan dikirimkan ke Kafka. Kehilangan event `auction.bid-placed` menyebabkan pemenang lelang tidak tercatat. |
+| Keamanan        | 6 (3x2) | Tanpa API Gateway, tidak ada satu titik enforcement untuk validasi JWT ada kemungkinan bid dikirimkan dengan token yang dipalsukan. |
+ 
+---
+ 
+#### Wallet Service
+ 
+| Kriteria        | Skor    | Alasan |
+|-----------------|---------|--------|
+| Keamanan        | 9 (3x3) | Dana pengguna disimpan dan dikelola di sini. Akses tidak sah ke API hold/capture berdampak finansial secara langsung. |
+| Integritas Data | 9 (3x3) | Operasi hold-capture-release harus bersifat idempoten. Jika terjadi duplikasi akibat retry tanpa deduplication, saldo pengguna bisa terpotong dua kali. |
+| Ketersediaan    | 9 (3x3) | Jika Wallet down saat auction settlement berlangsung, pemenang tidak bisa membayar dan order tidak pernah terbentuk mengakibatkan kehilangan pendapatan secara langsung. |
+| Performa        | 6 (3x2) | Ketika banyak lelang selesai secara bersamaan, Wallet menerima lonjakan request `capture`. Tanpa antrian, lonjakan ini dapat menyebabkan service crash. |
+ 
+---
+ 
+### Current Architecture
+#### Database Bersama
+ 
+Semua service (Auth, Bidding, Catalog, Wallet, Order, Notification) menggunakan satu instance PostgreSQL/Neon yang sama. Kondisi ini menciptakan dua masalah utama:
+ 
+- **Single point of failure untuk ketersediaan** jika database down, semua service gagal secara bersamaan.
+- **Risiko integritas data lintas service** schema yang terlalu berdekatan memungkinkan query dari satu service secara tidak sengaja mempengaruhi tabel milik service lain.
+---
+ 
+#### Tidak Ada API Gateway
+ 
+Frontend Next.js memanggil masing-masing service secara langsung. Kondisi ini berarti:
+ 
+- Tidak ada enforcement CORS dan rate limiting secara terpusat.
+- Validasi JWT diimplementasikan secara duplikat di masing-masing service.
+- Tidak ada satu titik masuk untuk memblokir traffic berbahaya sebelum mencapai service manapun.
+---
+ 
+#### Kafka: Single Broker
+ 
+Kafka digunakan untuk event `auction.bid-placed`, `auction.settled`, dan `wallet.hold`. Jika satu-satunya broker ini crash, event tidak terkirim dan sistem kehilangan konsistensi data antarservice.
+ 
+---
+ 
+### Mitigasi Risiko dan Justifikasi Perubahan Arsitektur
+ 
+#### Penambahan API Gateway / BFF
+ 
+**Risiko yang dimitigasi:** Keamanan pada Auth Service (6) dan Bidding Service (6); tidak adanya rate limiting.
+ 
+API Gateway / BFF ditambahkan sebagai single entrypoint untuk semua request yang berasal dari frontend. Gateway ini menangani auth routing terpusat, validasi JWT, CORS policy, dan rate limiting. Dengan adanya komponen ini, masing-masing service tidak perlu lagi mengimplementasikan validasi token secara duplikat. Serangan brute-force juga dapat diblokir di satu titik sebelum sempat mencapai service manapun.
+ 
+---
+ 
+#### Separate Schema per Service di PostgreSQL
+ 
+**Risiko yang dimitigasi:** Ketersediaan 9 (database bersama sebagai single point of failure) dan integritas data lintas service.
+ 
+Database dipecah menjadi schema yang terisolasi per service: `auth_db`, `bidding_db`, `wallet_db`, `catalog_db`, `order_db`, dan `notif_db`. Pendekatan ini memastikan bahwa masalah pada satu schema tidak mengakibatkan cascade failure ke service lain. Selain itu, isolasi schema mencegah query antarservice yang tidak diinginkan, sehingga integritas data masing-masing domain tetap terjaga.
+ 
+---
+ 
+#### Kafka Cluster dengan Replication Factor 3
+ 
+**Risiko yang dimitigasi:** Integritas data pada Bidding Service (6) dan Wallet Service (6) akibat kehilangan event.
+ 
+Kafka dikonfigurasi sebagai cluster dengan minimal 3 broker dan replication factor 3. Konfigurasi ini memastikan bahwa apabila satu broker crash, event `auction.bid-placed`, `auction.settled`, dan `wallet.hold` tetap tersedia di broker lain. Tanpa mitigasi ini, kehilangan event Kafka berarti pemenang lelang tidak tercatat dan proses settlement tidak pernah terjadi sebuah skenario yang berdampak finansial serius bagi pengguna dan platform.
+ 
+---
+ 
+#### CDN / HTTPS Endpoint
+ 
+**Risiko yang dimitigasi:** Ketersediaan dan performa pada Bidding Service dan Auth Service.
+ 
+CDN ditambahkan di depan Next.js Frontend untuk mendistribusikan beban traffic dan mengurangi latensi bagi pengguna yang tersebar secara geografis. CDN juga meningkatkan ketersediaan frontend karena static assets dapat di-cache meskipun origin server sedang mengalami beban tinggi.
+ 
+---
+ 
+#### Monitoring / Logging dan Object Storage
+ 
+**Risiko yang dimitigasi:** Observabilitas untuk semua service mendukung deteksi dini sebelum ketersediaan atau integritas data terdampak.
+ 
+Monitoring terpusat dan centralized logging ditambahkan untuk memantau health, metrics, dan audit trail seluruh service. Object storage digunakan khusus untuk menyimpan gambar listing pada Catalog Service, sehingga beban penyimpanan data biner tidak membebani database relasional.
+ 
+---
+ 
+### Ringkasan
+ 
+| Komponen            | Sebelum (Current Architecture)              | Sesudah (Future Architecture)        |
+|---------------------|--------------------------------------------|----------------------------------------|
+| Titik masuk         | Frontend langsung ke masing-masing service | API Gateway / BFF                      |
+| Database            | Satu instance bersama                      | Schema terpisah per service            |
+| Kafka               | Single broker                              | Cluster 3 broker, replication factor 3 |
+| Pengiriman frontend | Langsung dari origin server                | CDN / HTTPS endpoint                   |
+| Observabilitas      | Tidak ada                                  | Monitoring + Logging terpusat          |
+| Penyimpanan file    | Di database atau tidak terstruktur         | Object Storage                         |
+ 
+Risk storming memungkinkan tim mengidentifikasi bahwa **Bidding Service** dan **Wallet Service** adalah titik paling kritis dalam sistem bukan karena kompleksitasnya, melainkan karena dampak langsungnya terhadap pengguna, yaitu dana dan transaksi real-time. Perubahan arsitektur yang dihasilkan bukan hanya mengurangi risiko teknis secara signifikan, tetapi juga membentuk fondasi yang lebih kokoh untuk mendukung skala yang lebih besar seiring pertumbuhan BidMart.
 
 
 ## Pekerjaan Individu
