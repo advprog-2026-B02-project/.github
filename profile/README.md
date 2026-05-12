@@ -290,10 +290,18 @@ Risk storming memungkinkan tim mengidentifikasi bahwa **Bidding Service** dan **
 
 Aliran data utamanya adalah: client mengirim request ke controller, controller memanggil `AuthService`, service memvalidasi dan memproses data, service membaca/menulis entity melalui repository, lalu response dikembalikan ke client. Pada operasi tertentu, Auth juga menghasilkan efek samping seperti mengirim email atau menerbitkan event domain, misalnya ketika status user berubah menjadi suspended atau role user berubah.
 
-### Component Diagram Auth Module
+### Component Diagram Catalog Module
 
 ![Individual Component](images/individual_component_catalog.png)
 
-#### Code Diagram Auth Module
+#### Code Diagram Catalog Module
 
 ![Code Diagram](images/individual_code_catalog.png)
+
+**Penjelasan:** Catalog module bertanggung jawab atas listing, kategori, gambar, moderasi admin, dan sinkronisasi harga listing setelah ada bid. Catalog menjadi sumber data listing yang dipakai pembeli untuk browsing dan dipakai Bidding untuk memastikan barang masih valid untuk dilelang.
+
+**Keterangan Code Diagram Catalog:** Code diagram Catalog memperlihatkan pembagian komponen berdasarkan jenis akses. `CatalogController` melayani buyer/public untuk browsing catalog dan melihat detail listing. `SellerListingController` melayani seller untuk membuat, mengedit, mengaktifkan, membatalkan, dan menghapus listing miliknya. `AdminModerationController` dan `AdminCategoryController` melayani admin untuk moderasi listing serta pengelolaan kategori. `BidSyncController` adalah endpoint internal yang dipakai Bidding Service untuk validasi listing sebelum bid dan sinkronisasi harga setelah bid.
+
+Business logic utama listing berada di interface `ListingService` dan implementasinya `ListingServiceImpl`. Service ini menangani aturan domain seperti kepemilikan listing oleh seller, validasi kategori, status listing, aktivasi listing, moderasi, dan sinkronisasi `currentPrice` serta `bidCount`. Untuk kategori, `CategoryService` dan `CategoryServiceImpl` memisahkan logika pengelolaan kategori dari logika listing. `ListingImageController` mengatur tambah/hapus gambar listing dan memakai `ListingRepository` serta `ListingImageRepository` untuk memastikan gambar terhubung dengan listing yang benar.
+
+Aliran data utamanya adalah: request dari frontend atau service internal masuk ke controller sesuai use case, lalu controller memanggil service yang relevan. Service melakukan validasi domain dan membaca/menulis data melalui `ListingRepository`, `CategoryRepository`, atau `ListingImageRepository`. Untuk integrasi asynchronous, `CatalogBiddingEventListener` menerima event bid dari Kafka topic `auction.bid-placed`, lalu memanggil `ListingService` untuk memperbarui harga dan jumlah bid pada listing terkait.
