@@ -305,3 +305,21 @@ Aliran data utamanya adalah: client mengirim request ke controller, controller m
 Business logic utama listing berada di interface `ListingService` dan implementasinya `ListingServiceImpl`. Service ini menangani aturan domain seperti kepemilikan listing oleh seller, validasi kategori, status listing, aktivasi listing, moderasi, dan sinkronisasi `currentPrice` serta `bidCount`. Untuk kategori, `CategoryService` dan `CategoryServiceImpl` memisahkan logika pengelolaan kategori dari logika listing. `ListingImageController` mengatur tambah/hapus gambar listing dan memakai `ListingRepository` serta `ListingImageRepository` untuk memastikan gambar terhubung dengan listing yang benar.
 
 Aliran data utamanya adalah: request dari frontend atau service internal masuk ke controller sesuai use case, lalu controller memanggil service yang relevan. Service melakukan validasi domain dan membaca/menulis data melalui `ListingRepository`, `CategoryRepository`, atau `ListingImageRepository`. Untuk integrasi asynchronous, `CatalogBiddingEventListener` menerima event bid dari Kafka topic `auction.bid-placed`, lalu memanggil `ListingService` untuk memperbarui harga dan jumlah bid pada listing terkait.
+
+### Bermulya Anugrah Putra (2406347424)
+
+**Deskripsi singkat kontribusi individu (1-2 kalimat):** Saya bertanggung jawab atas pengembangan modul Bidding, yang menjadi *core engine* untuk mekanisme lelang *real-time*. Kontribusi ini mencakup pemrosesan penawaran (*bid*), sinkronisasi harga melalui WebSocket (STOMP), penanganan konkurensi dengan *pessimistic locking*, penerapan lapisan idempotensi untuk mencegah duplikasi *request*, serta penjadwalan asinkron untuk penutupan lelang otomatis.
+
+#### Component Diagram Bidding Module
+
+![Component Diagram Bidding](images/component_diagram_bidding.png)
+
+#### Code Diagram Bidding Module
+
+![Code Diagram Bidding](images/code_diagram_bidding.png)
+
+**Penjelasan:** Bidding module mengelola seluruh siklus hidup penawaran lelang secara komprehensif, mulai dari inisiasi lelang, penerimaan *bid* secara *real-time*, validasi nominal dan penahanan saldo (*hold funds*), perpanjangan waktu otomatis (*anti-sniping*), hingga penentuan pemenang. Modul ini beroperasi dengan dependensi yang kuat terhadap integrasi *service* lain (Auth, Catalog, Wallet) guna menjaga konsistensi state dan keabsahan transaksi.
+
+**Keterangan Code Diagram Bidding:** Code diagram Bidding mendemonstrasikan arsitektur berorientasi lapisan (*layered architecture*) dengan pemisahan tanggung jawab yang terstruktur. `BiddingController` bertindak sebagai *entry point* untuk *request* REST HTTP sekaligus melayani koneksi STOMP WebSocket. Secara krusial, *controller* ini mengimplementasikan mekanisme pertahanan awal (*idempotency*) dengan mengakses `IdempotencyRecordRepository` secara langsung untuk memblokir anomali duplikasi *request sebelum instruksi diteruskan ke *service layer*.
+
+Logika bisnis utama dienkapsulasi di dalam `BiddingServiceImpl`. *Service* ini mengorkestrasi validasi kompleks, memanfaatkan *pessimistic locking* pada `AuctionRepository` guna memitigasi *race condition*, serta menentukan apakah sebuah instruksi penawaran berstatus menang atau kalah secara algoritmik. Selama proses ini, *service* secara aktif berkomunikasi dengan modul eksternal melalui antarmuka *client* (`CatalogClient`, `UserClient`, `WalletClient`). Untuk mengakomodasi dinamika lelang, `BiddingScheduler` didesain untuk dieksekusi secara periodik guna mengevaluasi dan menutup lelang yang telah melewati tenggat waktu. Setiap transisi status yang definitif (seperti adanya *high bid* baru atau penutupan lelang) akan memicu penerbitan *event* spesifik (misal: `BidPlacedEvent` atau `WinnerDeterminedEvent`) melalui *Spring ApplicationEvent*, mendemonstrasikan sifat *decoupled* dalam distribusi notifikasi internal sistem.
