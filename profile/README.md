@@ -271,17 +271,29 @@ Risk storming memungkinkan tim mengidentifikasi bahwa **Bidding Service** dan **
 
 ## Pekerjaan Individu
 
-Nama: _Isi nama Anda di sini_
+### Lessyarta Kamali Sopamena Pirade (2406356643)
 
-**Deskripsi singkat kontribusi individu (1-2 kalimat).**
+**Deskripsi singkat kontribusi individu (1-2 kalimat):** Saya bertanggung jawab atas pengembangan modul Authentication, termasuk fitur registrasi, login, verifikasi email, reset password, JWT, refresh token, two-factor authentication, manajemen role, dan validasi user. Modul ini menjadi pusat autentikasi dan otorisasi dasar yang digunakan oleh service lain di BidMart.
 
-### Component Diagram
+#### Component Diagram Auth Module
 
-![Individual Container](images/individual_container_yourname.png)
+![Individual Component](images/individual_component_lessyarta_auth.png)
 
-### Code Diagram
+#### Code Diagram Auth Module
 
-Untuk setiap diagram kode, sertakan gambar dan keterangan singkat (module/class, interface, aliran data).
+![Code Diagram](images/individual_code_lessyarta_auth.png)
+**Penjelasan:** Auth module mengelola identitas user, login, JWT, refresh token, verifikasi email, reset password, 2FA, role, dan status user. Modul lain memakai Auth untuk validasi user dan authorization context.
 
-![Code Diagram 1](images/individual_code1_yourname.png)
-![Code Diagram 2](images/individual_code2_yourname.png)
+**Keterangan Code Diagram Auth:** Code diagram Auth memperlihatkan struktur utama modul Authentication. `AuthController` menjadi entry point untuk operasi user-facing seperti register, login, verifikasi email, reset password, 2FA, refresh token, logout, dan validasi user legacy. `InternalUserController` menjadi entry point internal untuk service lain atau admin process yang perlu membaca, membuat, mengubah, memvalidasi, atau menghapus data user. Kedua controller tersebut tidak langsung mengakses database, tetapi meneruskan request ke `AuthService` sebagai pusat business logic.
+
+`AuthService` mengatur aliran data autentikasi dari request hingga persistence: data registrasi/login divalidasi, password diproses dengan hashing, token JWT dibuat melalui `JwtService`, kode 2FA diproses oleh `TotpService`, dan email verifikasi/reset dikirim lewat `EmailService`. Untuk penyimpanan, `AuthService` memakai repository seperti `UserRepository`, `RoleRepository`, `RefreshTokenRepository`, `EmailVerificationTokenRepository`, dan `PasswordResetTokenRepository`. Interface repository tersebut menjadi boundary ke database sehingga controller tetap bersih dari detail query dan persistence.
+
+Aliran data utamanya adalah: client mengirim request ke controller, controller memanggil `AuthService`, service memvalidasi dan memproses data, service membaca/menulis entity melalui repository, lalu response dikembalikan ke client. Pada operasi tertentu, Auth juga menghasilkan efek samping seperti mengirim email atau menerbitkan event domain, misalnya ketika status user berubah menjadi suspended atau role user berubah.
+
+### Component Diagram Auth Module
+
+![Individual Component](images/individual_component_catalog.png)
+
+#### Code Diagram Auth Module
+
+![Code Diagram](images/individual_code_catalog.png)
