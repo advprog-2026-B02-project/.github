@@ -121,12 +121,26 @@ Deployment Diagram BidMart menggambarkan bagaimana seluruh komponen sistem di-de
 
 ## Future Architecture
 
-**Ringkasan:** Deskripsikan perubahan yang diusulkan (mis. pisahkan monolit menjadi layanan, tambahkan cache, CDN, autoscaling).
+**Ringkasan**:
+Arsitektur G.2 memperbaiki beberapa risiko dari arsitektur awal:
 
+1) Frontend saat ini memakai satu `NEXT_PUBLIC_API_BASE_URL`, sedangkan backend sudah dipisah menjadi banyak service. Tanpa gateway, frontend harus tahu semua alamat service dan integrasi mudah rusak saat deployment. Karena itu G.2 menambahkan API Gateway/BFF sebagai satu pintu masuk untuk REST dan WebSocket.
+
+2) Komunikasi event masih belum konsisten. Bidding memakai Spring application event untuk `BidPlacedEvent`, `WinnerDeterminedEvent`, dan `AuctionUnsoldEvent`, sementara Catalog dan Wallet sudah menunggu Kafka topic seperti `auction.bid-placed`, `auction.settled`, dan `auction.unsold`. Pada runtime microservice terpisah, Spring application event tidak akan menyeberang proses. Karena itu G.2 menetapkan Kafka sebagai event backbone lintas service, sedangkan Spring event hanya boleh dipakai untuk event internal dalam satu service.
+
+3) Konfigurasi port dan internal endpoint perlu distandardisasi. Bidding memakai port `8082`, Catalog `8083`, Notification `8085`, Order `8086`, tetapi Wallet default-nya juga `8082` walaupun diagram awal menaruh Wallet di `8084`. Pada G.2 Wallet distandardisasi ke `8084`, semua internal endpoint diamankan memakai `X-Service-Token`, dan service tidak diakses langsung oleh user.
+
+### Future Context Diagram
+![Future Context Diagram](images/future_context.png)
+**Penjelasan:** Future context diagram kami menunjukkan batas sistem paling luar. Aktor utama adalah Buyer, Seller, dan Admin. Semua aktor hanya berinteraksi dengan BidMart System melalui HTTPS dan WebSocket. Database, Kafka, SMTP, object storage, dan monitoring dianggap external system karena berada di luar kode aplikasi utama tetapi dibutuhkan agar sistem berjalan.
+
+### Future Container Diagram
 ![Future Container Diagram](images/future_container.png)
-![Future Deployment Diagram](images/future_deployment.png)
+**Penjelasan:** Future container diagram kami menambahkan API Gateway/BFF agar frontend tidak perlu langsung memanggil enam backend service. Gateway juga menjadi tempat konsisten untuk routing, CORS, rate limit, dan validasi JWT awal. Tiap backend tetap bertanggung jawab atas domainnya sendiri. Kafka menjadi jalur async resmi, sedangkan REST dipakai untuk query/command sinkron seperti validasi user, validasi listing, dan hold saldo.
 
-- Alasan perubahan singkat per poin (scalability, resilience, security).
+### Future Deployment Diagram
+![Future Deployment Diagram](images/future_deployment.png)
+**Penjelasan:** Future deployment diagram kami memperlihatkan alur dari developer ke repository, CI/CD, lalu runtime cloud. Semua service backend berjalan sebagai runtime terpisah. Database, Kafka, SMTP, object storage, dan observability berada sebagai managed external dependency agar backend dapat diskalakan dan dirilis secara terpisah.
 
 ## Risk Mitigation
 
